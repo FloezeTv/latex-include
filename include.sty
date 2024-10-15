@@ -1,0 +1,153 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{include}[2024/10/15 Include]
+
+\RequirePackage{etoolbox}
+\RequirePackage{graphicx}
+\RequirePackage{xcolor}
+\RequirePackage{pgffor}
+\RequirePackage{subcaption}
+\RequirePackage{calc}
+
+% Warn on unknown options
+\DeclareOption*{\PackageWarning{Unknwon option: \CurrentOption}}
+
+\ProcessOptions\relax
+
+% Imports a section from a file and creates a label
+% 
+% Usage:
+%   \useSection{Section title}{filename}
+%   \useSection[ref_name]{Subsection title}{filename}
+\makeatletter
+\newcommand*{\useSection}[3][]{{%
+			\def\useSection@currentTitleLabel{\ifstrempty{#1}{#3}{#1}}%
+			\edef\useSection@currentSectionLabel{\useSection@nextSectionLabel:\useSection@refStack\useSection@currentTitleLabel}%
+			\useSection@nextSectionCommand{#2\label{\useSection@currentSectionLabel}}%
+			\useSection@skipSectionLevel%
+			\let\useSection@nextSectionLabel@nnnnn\useSection@nextSectionLabel@inv%
+			\let\useSection@currentPath\useSection@includePath%
+			\edef\useSection@includePath{\useSection@currentPath/#3}%
+			\edef\useSection@refStack{\useSection@refStack\useSection@currentTitleLabel/}%
+			\input{\useSection@currentPath/#3}%
+		}}
+\newcommand*{\useSection@nextSectionCommand@inv}[1]{%
+	\PackageError{include}%
+	{No Section Level left for #1}%
+	{No further sections can be imported at this point, as it is not possible to write the heading}%
+	\colorbox{red}{NO SECTION LEVEL LEFT: #1}%
+}
+\ifdefined\chapter
+	\let\useSection@nextSectionCommand\chapter
+\else% \chapter does not exist; temporarily alias to \section and later skip section level
+	\let\useSection@nextSectionCommand\section
+\fi
+\let\useSection@nextSectionCommand@n\section
+\let\useSection@nextSectionCommand@nn\subsection
+\let\useSection@nextSectionCommand@nnn\subsubsection
+\let\useSection@nextSectionCommand@nnnn\paragraph
+\let\useSection@nextSectionCommand@nnnnn\subparagraph
+\def\useSection@nextSectionLabel{chap}
+\def\useSection@nextSectionLabel@n{sec}
+\def\useSection@nextSectionLabel@nn{subsec}
+\def\useSection@nextSectionLabel@nnn{subsubsec}
+\def\useSection@nextSectionLabel@nnnn{par}
+\def\useSection@nextSectionLabel@nnnnn{subpar}
+\def\useSection@nextSectionLabel@inv{inv}
+\def\useSection@includePath{chapters}
+\def\useSection@refStack{}
+
+% Skips a section level.
+% Acts as if a new section was included using `useSection' while remaining in the same file
+%
+% Usage:
+%   \useSection@skipSectionLevel
+\newcommand*{\useSection@skipSectionLevel}{%
+	\let\useSection@nextSectionCommand\useSection@nextSectionCommand@n%
+	\let\useSection@nextSectionCommand@n\useSection@nextSectionCommand@nn%
+	\let\useSection@nextSectionCommand@nn\useSection@nextSectionCommand@nnn%
+	\let\useSection@nextSectionCommand@nnn\useSection@nextSectionCommand@nnnn%
+	\let\useSection@nextSectionCommand@nnnn\useSection@nextSectionCommand@nnnnn%
+	\let\useSection@nextSectionCommand@nnnnn\useSection@nextSectionCommand@inv%
+	\let\useSection@nextSectionLabel\useSection@nextSectionLabel@n%
+	\let\useSection@nextSectionLabel@n\useSection@nextSectionLabel@nn%
+	\let\useSection@nextSectionLabel@nn\useSection@nextSectionLabel@nnn%
+	\let\useSection@nextSectionLabel@nnn\useSection@nextSectionLabel@nnnn%
+	\let\useSection@nextSectionLabel@nnnn\useSection@nextSectionLabel@nnnnn%
+}
+
+% If \chapter does not exist, skip first level
+\ifdefined\chapter\else\useSection@skipSectionLevel\fi
+\makeatother
+
+
+% Inserts an image from rsc or rsc/bin.
+% If the image was not found,
+% a replacement is output and an error is logged
+% so that latexmk can try to build it using make.
+% 
+% Usage:
+%   \image{filename}
+%   \image[options for \includegraphics]{filename}
+\makeatletter
+\newcommand*{\image}[2][]{{%
+			\graphicspath{ {./rsc/} {./rsc/bin/} }%
+			\patchcmd{\Gin@ii}% See https://tex.stackexchange.com/a/39987
+			{\begingroup}%
+			{\begingroup\renewcommand{\@latex@error}[2]{%
+					\typeout{No file rsc/bin/#2.}%
+					\PackageWarning{include}{#2 not found; reporing for latexmk to build.}%
+					\color{red}\fbox{\color{black}Image not found.}
+				}}%
+			{}%
+			{}%
+			\includegraphics[width=\linewidth,#1]{#2}%
+		}}
+\makeatother
+
+% Inserts a figure containing an image using \image
+% 
+% Usage:
+%   \imageFigure{reference}{label}{filename}
+%   \imageFigure[options for \image]{reference}{label}{filename}
+\newcommand*{\imageFigure}[4][]{\begin{figure}
+		\centering
+		\image[#1]{#4}
+		\caption{\label{fig:#2} #3}
+	\end{figure}}
+
+% Inserts a figure containing multiple subfigures
+% 
+% Usage:
+%   \imageMultiFigure{reference}{label}{subfigure1, subfigure2, ...}
+% Where subfigures can use:
+%    \image[options]{filename}
+%    \caption[reference]{label}
+\makeatletter
+\newcounter{imageMultiFigure@count}
+\newcommand*{\imageMultiFigure@figureEnvironment}{figure*}
+\newcommand*{\@imageMultiFigure}[3]{{\begin{\imageMultiFigure@figureEnvironment}{
+					% Get number of subfigures
+					\setcounter{imageMultiFigure@count}{0}
+					\foreach \e in {#3} {\stepcounter{imageMultiFigure@count}}%
+					\edef\count{\arabic{imageMultiFigure@count}}%
+					% Create new commands for subfigures
+					\newcommand*{\imageMultiFigure@caption}[2][]{\RenewCommandCopy{\caption}{\imageMultiFigure@saved@caption}\subcaption{\ifstrempty{##1}{}{\label{subfig:##1}}##2}}%
+					\newcommand*{\imageMultiFigure@image}[2][]{\RenewCommandCopy{\image}{\imageMultiFigure@saved@image}\image[##1]{##2}}%
+					\centering
+					\foreach [count=\n] \e in {#3} {{\begin{subfigure}{\linewidth/\count-3mm}
+										\centering
+										% Import new commands
+										\NewCommandCopy{\imageMultiFigure@saved@caption}{\caption}%
+										\NewCommandCopy{\imageMultiFigure@saved@image}{\image}%
+										\RenewCommandCopy{\caption}{\imageMultiFigure@caption}%
+										\RenewCommandCopy{\image}{\imageMultiFigure@image}%
+										% Print defined subfigure
+										\e
+									\end{subfigure}\hfill}}
+				}
+				\caption{\label{fig:#1} #2}
+			\end{\imageMultiFigure@figureEnvironment}}}
+\newcommand*{\imageMultiFigure}{\@ifstar%
+	{\renewcommand*{\imageMultiFigure@figureEnvironment}{figure*}\@imageMultiFigure}%
+	{\renewcommand*{\imageMultiFigure@figureEnvironment}{figure}\@imageMultiFigure}}
+\makeatother
